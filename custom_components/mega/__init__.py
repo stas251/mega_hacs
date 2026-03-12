@@ -12,6 +12,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.service import bind_hass
+from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.helpers import config_validation as cv
 from homeassistant.config_entries import ConfigEntry
 from .const import DOMAIN, CONF_INVERT, CONF_RELOAD, PLATFORMS, CONF_PORTS, CONF_CUSTOM, CONF_SKIP, CONF_PORT_TO_SCAN, \
@@ -161,19 +162,37 @@ async def async_setup(hass: HomeAssistant, config: dict):
     hass.data[DOMAIN][CONF_ALL] = {}
     view.allowed_hosts |= set(config.get(DOMAIN, {}).get(CONF_ALLOW_HOSTS, []))
     hass.http.register_view(view)
-    hass.services.async_register(
-        DOMAIN, 'save', partial(_save_service, hass), schema=vol.Schema({
+# Регистрация сервисов через новый механизм (совместимо с HA 2026.3+)
+    from homeassistant.helpers.service import async_register_admin_service
+# Сервис save
+    async_register_admin_service(
+        hass,
+        DOMAIN,
+        'save',
+        partial(_save_service, hass),
+        schema=vol.Schema({
             vol.Optional('mega_id'): str
         })
     )
-    hass.services.async_register(
-        DOMAIN, 'get_port', partial(_get_port, hass), schema=vol.Schema({
+# Сервис get_port
+    async_register_admin_service(
+        hass,
+        DOMAIN,
+        'get_port',
+        partial(_get_port, hass),
+        schema=vol.Schema({
             vol.Optional('mega_id'): str,
             vol.Optional('port'): vol.Any(int, [int]),
         })
     )
-    hass.services.async_register(
-        DOMAIN, 'run_cmd', partial(_run_cmd, hass), schema=vol.Schema({
+
+# Сервис run_cmd
+    async_register_admin_service(
+        hass,
+        DOMAIN,
+        'run_cmd',
+        partial(_run_cmd, hass),
+        schema=vol.Schema({
             vol.Optional('port'): int,
             vol.Required('cmd'): str,
             vol.Optional('mega_id'): str,
@@ -211,12 +230,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     _hubs[entry.entry_id] = hub
     _subs[entry.entry_id] = entry.add_update_listener(updater)
     await hub.start()
-    for platform in PLATFORMS:
-        hass.async_create_task(
-            hass.config_entries.async_forward_entry_setup(
-                entry, platform
-            )
-        )
+    # for platform in PLATFORMS:
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
     await hub.updater.async_refresh()
     return True
 
@@ -268,13 +284,10 @@ async def async_migrate_entry(hass, config_entry: ConfigEntry):
     await hub.stop()
     new.update(cfg)
     _LOGGER.debug(f'new config: %s', new)
-    config_entry.data = new
-    config_entry.version = ConfigFlow.VERSION
-
+    hass.config_entries.async_update_entry(config_entry, data=new, version=ConfigFlow.VERSION)
     _LOGGER.info("Migration to version %s successful", config_entry.version)
 
     return True
-
 
 async def _save_service(hass: HomeAssistant, call: ServiceCall):
     mega_id = call.data.get('mega_id')

@@ -63,8 +63,8 @@ async def validate_input(hass: core.HomeAssistant, data):
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for mega."""
 
-    VERSION = 26
-    CONNECTION_CLASS = config_entries.CONN_CLASS_ASSUMED
+    VERSION = 1  # Исправлено с 26 на 1
+    CONNECTION_CLASS = config_entries.CONN_CLASS_LOCAL_POLL  # Изменено с ASSUMED на LOCAL_POLL
 
     async def async_step_user(self, user_input=None):
         """Handle the initial step."""
@@ -76,14 +76,19 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
 
         try:
+            # Проверка на уникальность ID
+            await self.async_set_unique_id(user_input[CONF_ID])
+            self._abort_if_unique_id_configured()
+
             hub = await validate_input(self.hass, user_input)
             await hub.start()
-            hub.new_naming=True
+            hub.new_naming = True
             config = await hub.get_config(nports=user_input.get(CONF_NPORTS, 37))
             await hub.stop()
             hub.lg.debug(f'config loaded: %s', config)
             config.update(user_input)
             config['new_naming'] = True
+            
             return self.async_create_entry(
                 title=user_input.get(CONF_ID, user_input[CONF_HOST]),
                 data=config,
@@ -96,23 +101,15 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors["base"] = "duplicate_id"
         except Exception as exc:  # pylint: disable=broad-except
             _LOGGER.exception("Unexpected exception")
-            errors[CONF_ID] = str(exc)
+            errors["base"] = "unknown"
 
         return self.async_show_form(
             step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
         )
 
-    @staticmethod
-    @callback
-    def async_get_options_flow(config_entry):
-        return OptionsFlowHandler(config_entry)
-
-
 class OptionsFlowHandler(config_entries.OptionsFlow):
-
     def __init__(self, config_entry: ConfigEntry):
         self.config_entry = config_entry
-
     async def async_step_init(self, user_input=None):
         """Manage the options."""
         new_naming = self.config_entry.data.get('new_naming', False)
@@ -121,7 +118,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             cfg = dict(self.config_entry.data)
             cfg.update(user_input)
             cfg['new_naming'] = new_naming
-            self.config_entry.data = cfg
+            self.hass.config_entries.async_update_entry(entry=self.config_entry, data=cfg)
             await get_hub(self.hass, cfg)
 
             if reload:
